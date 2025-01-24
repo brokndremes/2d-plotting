@@ -1,0 +1,67 @@
+__global__ void calc_2ds(
+    double *results_array,
+    int *int_arg_array,
+    double *local_y_vals,
+    double *local_y_shift_array,
+    double *local_model_interp_array,
+    double *local_vel_models
+)
+{
+    const int global_idx = blockIdx.x * blockDim.x + threadIdx.x;
+    const int max_model_layers = int_arg_array[1];
+    const int num_y_points = int_arg_array[2];
+    const int num_x_points = int_arg_array[3];
+    const int total_points = num_x_points * num_y_points;
+    const int depth_index = 0;
+    const int velocity_index = 1;
+    const int num_final_items = 2;
+    // Bounds checking - ensure that global idx is within bounds
+    if(global_idx<total_points)
+    {
+        const int local_x_ind = int(global_idx % num_x_points);
+        const int local_y_ind = int((global_idx - local_x_ind) / num_x_points);
+        const double local_y_val = local_y_vals[local_y_ind];
+        const double local_y_shift = local_y_shift_array[local_x_ind];
+        const double shifted_y_val = local_y_val + local_y_shift;
+
+        const int model_1_ind = int(local_model_interp_array[local_x_ind * 4 + 0]);
+        const double model_1_weight = local_model_interp_array[local_x_ind * 4 + 2];
+        const int model_2_ind = int(local_model_interp_array[local_x_ind * 4 + 1]);
+        const double model_2_weight = local_model_interp_array[local_x_ind * 4 + 3];
+        int model_1_layer_idx = 0;
+        double model_1_vel;
+        double model_1_depth;
+        bool model_1_finished = false;
+        do {
+            model_1_depth = local_vel_models[
+                model_1_ind * max_model_layers * num_final_items +
+                model_1_layer_idx * num_final_items +
+                depth_index];
+            model_1_finished = (model_1_depth > shifted_y_val);
+            model_1_vel =  local_vel_models[
+                model_1_ind * max_model_layers * num_final_items +
+                model_1_layer_idx * num_final_items +
+                velocity_index];
+            model_1_layer_idx++;
+        }while(model_1_layer_idx < max_model_layers && !model_1_finished);
+        const double model_1_weighted = model_1_weight * model_1_vel;
+        int model_2_layer_idx = 0;
+        double model_2_vel;
+        double model_2_depth;
+        bool model_2_finished = false;
+        do {
+            model_2_depth = local_vel_models[
+                model_2_ind * max_model_layers * num_final_items +
+                model_2_layer_idx * num_final_items +
+                depth_index];
+            model_2_finished = (model_2_depth > shifted_y_val);
+            model_2_vel =  local_vel_models[
+                model_2_ind * max_model_layers * num_final_items +
+                model_2_layer_idx * num_final_items +
+                velocity_index];
+            model_2_layer_idx++;
+        }while(model_2_layer_idx < max_model_layers && !model_2_finished);
+        const double model_2_weighted = model_2_weight * model_2_vel;
+        results_array[global_idx] = model_1_weighted + model_2_weighted;
+    }
+}
